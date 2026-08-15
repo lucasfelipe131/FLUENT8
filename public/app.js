@@ -12,6 +12,14 @@ const STARTERS={
   fr:['Oui.','Non, pas encore.','Pouvez-vous répéter, s’il vous plaît ?']
 };
 const $=id=>document.getElementById(id);
+function esc(value){
+  return String(value??'').replace(/[&<>"]/g,char=>({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;'
+  })[char]);
+}
 const store={get(k,f){try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
 function uid(){return 'stu_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4)}
 function minutesToText(total){const m=Math.floor(total/60);const s=String(total%60).padStart(2,'0');return m+'m '+s+'s'}
