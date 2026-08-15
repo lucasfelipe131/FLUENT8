@@ -2,10 +2,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { buildHeuristicCoach, buildOpenAICoach } = require('./coach');
+const { hasVoiceAI, processVoice, synthesizeSpeech } = require('./voice');
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const MAX_BODY_BYTES = 256 * 1024;
+const MAX_VOICE_BODY_BYTES = 4 * 1024 * 1024;
+const rateBuckets = new Map();
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -25,13 +28,30 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function readJson(req) {
+function allowRequest(req, scope, limit, windowMs) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const client = forwarded || req.socket.remoteAddress || 'unknown';
+  const key = `${scope}:${client}`;
+  const now = Date.now();
+  const recent = (rateBuckets.get(key) || []).filter(time => now - time < windowMs);
+  if (recent.length >= limit) return false;
+  recent.push(now);
+  rateBuckets.set(key, recent);
+  if (rateBuckets.size > 2000) {
+    for (const [bucket, times] of rateBuckets) {
+      if (!times.some(time => now - time < windowMs)) rateBuckets.delete(bucket);
+    }
+  }
+  return true;
+}
+
+function readJson(req, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let raw = '';
     req.setEncoding('utf8');
     req.on('data', chunk => {
       raw += chunk;
-      if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
+      if (Buffer.byteLength(raw) > limit) {
         reject(new Error('payload_too_large'));
         req.destroy();
       }
@@ -71,7 +91,42 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
   if (url.pathname === '/health') {
-    return sendJson(res, 200, { ok: true, service: 'fluent8', version: '3.0.0' });
+    return sendJson(res, 200, { ok: true, service: 'fluent8', version: '4.0.0', voice_ai: hasVoiceAI() });
+  }
+
+  if (url.pathname === '/api/config' && req.method === 'GET') {
+    return sendJson(res, 200, {
+      voice_ai: hasVoiceAI(),
+      languages: ['en', 'es', 'fr'],
+      max_recording_seconds: 30
+    });
+  }
+
+  if (url.pathname === '/api/voice' && req.method === 'POST') {
+    if (!allowRequest(req, 'voice', 30, 15 * 60 * 1000)) return sendJson(res, 429, { error: 'rate_limited' });
+    try {
+      const body = await readJson(req, MAX_VOICE_BODY_BYTES);
+      const result = await processVoice(body);
+      return sendJson(res, 200, result);
+    } catch (error) {
+      const status = error.statusCode
+        || (error.message === 'payload_too_large' || error.message === 'audio_too_large' ? 413
+          : error.message === 'voice_ai_not_configured' ? 503
+          : 400);
+      return sendJson(res, status, { error: error.message });
+    }
+  }
+
+  if (url.pathname === '/api/speech' && req.method === 'POST') {
+    if (!allowRequest(req, 'speech', 80, 15 * 60 * 1000)) return sendJson(res, 429, { error: 'rate_limited' });
+    if (!hasVoiceAI()) return sendJson(res, 503, { error: 'voice_ai_not_configured' });
+    try {
+      const body = await readJson(req);
+      const audio = await synthesizeSpeech(body.text, body.lang);
+      return sendJson(res, 200, { audio });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message });
+    }
   }
 
   if (url.pathname === '/api/coach' && req.method === 'POST') {
@@ -93,5 +148,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Fluent8 v3 running on port ${PORT}`);
+  console.log(`Fluent8 v4 running on port ${PORT}`);
 });
