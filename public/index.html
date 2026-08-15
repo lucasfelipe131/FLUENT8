@@ -9,7 +9,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon.svg">
-<link rel="stylesheet" href="/styles.css?v=3.0.1">
+<link rel="stylesheet" href="/styles.css?v=4.0.0">
 </head>
 <body>
 <div id="toast" class="toast hidden"></div>
@@ -165,9 +165,9 @@
       </div>
       <div class="feedback hidden" id="feedbackBox">
         <div class="scoreGrid">
-          <div class="scoreBox"><b id="sPron">0%</b><span>clareza</span></div>
-          <div class="scoreBox"><b id="sGram">0%</b><span>estrutura</span></div>
-          <div class="scoreBox"><b id="sNat">0%</b><span>naturalidade</span></div>
+          <div class="scoreBox"><b id="sPron">0%</b><span id="sPronLabel">pronúncia</span></div>
+          <div class="scoreBox"><b id="sGram">0%</b><span id="sGramLabel">fluência</span></div>
+          <div class="scoreBox"><b id="sNat">0%</b><span id="sNatLabel">ritmo</span></div>
           <div class="scoreBox"><b id="sOverall">0%</b><span>geral</span></div>
         </div>
         <div id="coachCorrection"></div>
@@ -181,7 +181,9 @@
           <div><b id="voiceTitle">Sua vez de falar</b><small id="voiceStatus">Toque no botão e responda naturalmente.</small></div>
         </div>
         <div id="voiceLive" class="voiceLive hidden" aria-live="polite"></div>
+        <div id="voiceMeter" class="voiceMeter hidden" aria-hidden="true"><div><i id="voiceMeterBar"></i></div><span id="recordingTime">00:00</span></div>
         <button class="mic" id="micBtn">🎙️ Falar agora</button>
+        <small class="aiVoiceNote">O áudio é processado para transcrição e pronúncia. A voz do professor é gerada por IA.</small>
         <button class="voiceHelpBtn hidden" id="voiceHelpBtn">Como liberar o microfone no iPhone</button>
         <div class="micHelp hidden" id="micHelp"><b>No Safari do iPhone:</b><br>1. Toque em <b>aA</b> na barra do endereço.<br>2. Abra <b>Ajustes do Site</b> → <b>Microfone</b>.<br>3. Selecione <b>Permitir</b>, volte ao Fluent8 e tente novamente.</div>
       </div>
@@ -218,6 +220,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=3.0.1" defer></script>
+<script src="/app.js?v=4.0.0" defer></script>
 </body>
 </html>

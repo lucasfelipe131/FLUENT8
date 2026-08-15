@@ -1,5 +1,5 @@
-const CACHE = 'fluent8-v3';
-const CORE = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'fluent8-v4';
+const CORE = ['/', '/styles.css?v=4.0.0', '/app.js?v=4.0.0', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', event => {
   self.skipWaiting();

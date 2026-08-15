@@ -42,112 +42,109 @@ function renderProgress(){const s=current();$('progressFluency').textContent=flu
 function render(){const s=current();$('greeting').textContent=greeting();$('heroCopy').textContent='Olá, '+s.name+'. Sua trilha atual é focada em '+(GOALS[s.goal]?.[1]||'aprendizado')+' em '+LANGS[s.lang].name+'.';$('missionTitle').textContent=(s.goal==='work'?'Negociação de valor':'Check-in em um hotel');$('missionMeta').textContent=(s.goal==='work'?'Modo profissional':'Conversação real')+' · '+s.daily+' min';$('doneMin').textContent=s.minutesDone;$('dailyMin').textContent=s.daily;$('missionBar').style.width=Math.min(100,Math.round((s.minutesDone/s.daily)*100))+'%';$('fluencyScore').textContent=fluency(s);$('ring').style.setProperty('--ring',fluency(s)+'%');$('streak').textContent=s.streak+' dia'+(s.streak>1?'s':'');$('vocabCount').textContent=(s.memory.savedPhrases||[]).length;$('talkTime').textContent=minutesToText(s.talkSeconds);$('accuracy').textContent=s.attempts?averageScore(s)+'%':'—';$('studentChip').textContent=s.name+' · '+LANGS[s.lang].flag+' '+s.level;$('coachHeading').textContent='Professor IA de '+s.name;renderMemory();renderReview();renderProgress();renderProfiles();}
 function switchView(v){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===v));document.querySelectorAll('.tabBtn').forEach(x=>x.classList.toggle('active',x.dataset.view===v));window.scrollTo({top:0,behavior:'smooth'})}
 document.querySelectorAll('.tabBtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-function speak(text){if(!('speechSynthesis' in window)) return; speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=LANGS[current().lang].locale; u.rate=.88; u.pitch=1; speechSynthesis.speak(u)}
-let activeRecognition=null;
-let voiceText='';
-let voiceSent=false;
-let voiceErrorCode='';
-let voiceStartedAt=0;
+let playbackContext=null;
+let activeAiSource=null;
+let speechSession=0;
+let activeCapture=null;
+let voiceDraft='';
 let voiceSession=0;
-let micPermissionReady=false;
+function browserSpeak(text){if(!('speechSynthesis' in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=LANGS[current().lang].locale;u.rate=.92;u.pitch=1;speechSynthesis.speak(u)}
+function stopAiAudio(){speechSession+=1;if(activeAiSource){try{activeAiSource.stop()}catch{}activeAiSource=null}if('speechSynthesis' in window)speechSynthesis.cancel()}
+async function unlockPlayback(){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;if(!playbackContext||playbackContext.state==='closed')playbackContext=new AC();if(playbackContext.state==='suspended'){try{await playbackContext.resume()}catch{}}return playbackContext}
+async function playAiAudio(data,mime='audio/mpeg'){
+  if(!data)return false;const session=++speechSession;const bytes=Uint8Array.from(atob(data),c=>c.charCodeAt(0));
+  try{const ctx=await unlockPlayback();if(!ctx)throw new Error('no_audio_context');const decoded=await ctx.decodeAudioData(bytes.buffer.slice(0));if(session!==speechSession)return false;const source=ctx.createBufferSource();source.buffer=decoded;source.connect(ctx.destination);source.onended=()=>{if(activeAiSource===source)activeAiSource=null};activeAiSource=source;source.start();return true}catch{}
+  try{const blob=new Blob([bytes],{type:mime});const audio=new Audio(URL.createObjectURL(blob));audio.playsInline=true;await audio.play();return true}catch{return false}
+}
+async function speak(text){
+  const clean=String(text||'').trim();if(!clean)return;stopAiAudio();const session=speechSession;await unlockPlayback();
+  try{const r=await fetch('/api/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:clean,lang:current().lang})});if(!r.ok)throw new Error('speech');const payload=await r.json();if(session!==speechSession)return;if(await playAiAudio(payload.audio?.data,payload.audio?.mime))return}catch{}
+  if(session===speechSession)browserSpeak(clean);
+}
 function setVoiceState(state,title,detail,live=''){
   const panel=$('voicePanel'); if(!panel) return;
   panel.dataset.state=state;
   $('voiceTitle').textContent=title;
   $('voiceStatus').textContent=detail;
-  $('voiceOrb').textContent=state==='listening'?'◉':state==='processing'?'✦':state==='error'?'!':'🎙️';
-  $('micBtn').classList.toggle('listening',state==='listening');
-  $('micBtn').textContent=state==='listening'?'⏹️ Terminar resposta':state==='preparing'?'Preparando microfone…':state==='processing'?'Analisando resposta…':'🎙️ Falar agora';
+  $('voiceOrb').textContent=state==='recording'?'◉':state==='processing'?'✦':state==='error'?'!':'🎙️';
+  $('micBtn').classList.toggle('listening',state==='recording');
+  $('micBtn').textContent=state==='recording'?'⏹️ Terminar e transcrever':state==='preparing'?'Preparando microfone…':state==='processing'?'Ouvindo e analisando…':'🎙️ Falar agora';
   $('micBtn').disabled=state==='preparing'||state==='processing';
   $('voiceLive').textContent=live;
   $('voiceLive').classList.toggle('hidden',!live);
+  $('voiceMeter').classList.toggle('hidden',state!=='recording');
+  if(state!=='recording')$('voiceMeterBar').style.width='0%';
 }
 function showVoiceError(code){
   const messages={
     'not-allowed':['Microfone bloqueado','Libere o microfone para este site e toque em “Falar agora”.',true],
-    'service-not-allowed':['Reconhecimento de voz desativado','No iPhone, ative Siri e Ditado e libere o microfone para o Safari.',true],
     'audio-capture':['Microfone indisponível','Feche outro app que esteja usando o áudio e tente novamente.',false],
-    'no-speech':['Não ouvi sua voz','Fale depois que aparecer “Estou ouvindo”. Aproxime o celular e tente novamente.',false],
-    'network':['Reconhecimento sem conexão','Confira a internet e tente de novo. Você também pode responder digitando.',false],
-    'aborted':['Escuta interrompida','Toque em “Falar agora” quando estiver pronto.',false]
+    'no-speech':['Gravação muito curta','Fale por pelo menos um segundo e toque novamente para terminar.',false],
+    'unsupported':['Gravação não suportada','Atualize o Safari ou use a resposta digitada enquanto isso.',false],
+    'voice-ai-not-configured':['Voz avançada ainda não ativada','A gravação funcionou, mas o servidor ainda precisa da configuração do motor de voz.',false],
+    'voice-server':['Não consegui analisar este áudio','Sua gravação não foi salva. Tente novamente em um local mais silencioso.',false]
   };
-  const item=messages[code]||['Não consegui iniciar a escuta','Tente novamente ou responda digitando.',false];
-  setVoiceState('error',item[0],item[1],voiceText.trim());
+  const item=messages[code]||['Não consegui iniciar a gravação','Tente novamente ou responda digitando.',false];
+  setVoiceState('error',item[0],item[1],voiceDraft.trim());
   $('voiceHelpBtn').classList.toggle('hidden',!item[2]);
 }
-function stopRecognition(abort=false){
-  if(!activeRecognition) return;
-  try{abort?activeRecognition.abort():activeRecognition.stop()}catch{}
+function cleanupCapture(capture){
+  if(!capture)return;clearInterval(capture.timer);clearTimeout(capture.maxTimer);try{capture.processor.onaudioprocess=null;capture.processor.disconnect();capture.source.disconnect();capture.sink.disconnect()}catch{}capture.stream.getTracks().forEach(track=>track.stop());try{capture.context.close()}catch{}
 }
 function resetVoice(){
   voiceSession+=1;
-  if(activeRecognition){const rec=activeRecognition;activeRecognition=null;rec.onstart=null;rec.onspeechstart=null;rec.onresult=null;rec.onerror=null;rec.onend=null;try{rec.abort()}catch{}}
-  voiceText=''; voiceSent=false; voiceErrorCode='';
+  if(activeCapture){cleanupCapture(activeCapture);activeCapture=null}voiceDraft='';
   $('voiceHelpBtn').classList.add('hidden'); $('micHelp').classList.add('hidden');
+  $('recordingTime').textContent='00:00';
   setVoiceState('idle','Sua vez de falar','Toque no botão e responda naturalmente.');
 }
-async function ensureMicrophone(){
-  if(micPermissionReady||!navigator.mediaDevices?.getUserMedia) return;
-  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-  stream.getTracks().forEach(track=>track.stop());
-  micPermissionReady=true;
+function mergeSamples(chunks){let size=0;chunks.forEach(c=>size+=c.length);const output=new Float32Array(size);let offset=0;chunks.forEach(c=>{output.set(c,offset);offset+=c.length});return output}
+function resample(input,inputRate,outputRate=16000){if(inputRate===outputRate)return input;const ratio=inputRate/outputRate;const length=Math.max(1,Math.round(input.length/ratio));const output=new Float32Array(length);for(let i=0;i<length;i++){const start=Math.floor(i*ratio);const end=Math.min(input.length,Math.floor((i+1)*ratio));let sum=0;for(let j=start;j<end;j++)sum+=input[j];output[i]=sum/Math.max(1,end-start)}return output}
+function encodeWav(chunks,inputRate){
+  const samples=resample(mergeSamples(chunks),inputRate,16000);const buffer=new ArrayBuffer(44+samples.length*2);const view=new DataView(buffer);const write=(offset,text)=>{for(let i=0;i<text.length;i++)view.setUint8(offset+i,text.charCodeAt(i))};write(0,'RIFF');view.setUint32(4,36+samples.length*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,16000,true);view.setUint32(28,32000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,samples.length*2,true);let offset=44;for(let i=0;i<samples.length;i++,offset+=2){const sample=Math.max(-1,Math.min(1,samples[i]));view.setInt16(offset,sample<0?sample*0x8000:sample*0x7fff,true)}return new Uint8Array(buffer)
 }
-function finishVoice(text){
-  const clean=String(text||'').trim(); if(!clean||voiceSent) return;
-  voiceSent=true;
-  const seconds=Math.max(3,Math.round((Date.now()-voiceStartedAt)/1000));
-  stopRecognition();
-  setVoiceState('processing','Analisando sua resposta','O professor está preparando uma correção útil.',clean);
-  coach(clean,seconds).then(ok=>{if(ok)setVoiceState('idle','Boa! Sua vez novamente','Ouça a próxima pergunta e continue a conversa.');});
+function toBase64(bytes){let binary='';const step=0x8000;for(let i=0;i<bytes.length;i+=step)binary+=String.fromCharCode(...bytes.subarray(i,i+step));return btoa(binary)}
+function setScoreLabels(a,b,c){$('sPronLabel').textContent=a;$('sGramLabel').textContent=b;$('sNatLabel').textContent=c}
+function showFeedback(payload,mode='text'){
+  const voice=payload.voice_scores;const scores=voice||payload.scores;setScoreLabels(voice?'pronúncia':'clareza',voice?'fluência':'estrutura',voice?'ritmo':'naturalidade');
+  $('sPron').textContent=scores.pronunciation+'%';$('sGram').textContent=(voice?voice.fluency:payload.scores.grammar)+'%';$('sNat').textContent=(voice?voice.rhythm:payload.scores.naturalness)+'%';$('sOverall').textContent=scores.overall+'%';
+  $('coachCorrection').innerHTML='<b>Forma mais natural:</b> '+esc(payload.correction);const details=[payload.feedback_pt,payload.pronunciation_tip_pt,payload.sound_focus_pt,payload.tip].filter(Boolean);$('coachTip').textContent=details.join(' · ');$('feedbackBox').classList.remove('hidden');
+}
+async function submitVoice(wav,seconds,session){
+  const s=current();const context={student:{name:s.name,goal:s.goal,level:s.level},name:s.name,scenario:convo.scenario,turn:convo.turn,prompt:convo.lastPrompt,history:convo.history.slice(-8),memory:s.memory};
+  let response;try{response=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:toBase64(wav),format:'wav',lang:s.lang,context})})}catch{if(session===voiceSession)showVoiceError('voice-server');return false}
+  let payload=null;try{payload=await response.json()}catch{}
+  if(session!==voiceSession)return false;if(!response.ok){showVoiceError(payload?.error==='voice_ai_not_configured'?'voice-ai-not-configured':'voice-server');return false}
+  const transcript=String(payload.transcript||'').trim();if(!transcript){showVoiceError('no-speech');return false}
+  addBubble('me',s.name,esc(transcript));addBubble('ai','Professor IA',esc(payload.teacher_reply)+'<br><br><b>Forma mais natural:</b> '+esc(payload.correction)+'<br><br><b>Próxima pergunta:</b> '+esc(payload.next_prompt));showFeedback(payload,'voice');
+  const scores=payload.scores||{pronunciation:payload.voice_scores?.pronunciation||0,grammar:payload.voice_scores?.fluency||0,naturalness:payload.voice_scores?.rhythm||0,overall:payload.voice_scores?.overall||0};applyScores(s,scores,seconds,payload.voice_scores?'voice':'text');updateMemoryFromResponse(s,payload);convo.history.push({role:'student',text:transcript},{role:'teacher',text:payload.teacher_reply},{role:'teacher',text:payload.next_prompt});convo.turn+=1;convo.lastPrompt=payload.next_prompt;saveStudents();render();$('talkScroll').scrollTop=$('talkScroll').scrollHeight;
+  setVoiceState('idle','Transcrição concluída','Sua pronúncia foi analisada. Continue a conversa.',transcript);if(!(await playAiAudio(payload.audio?.data,payload.audio?.mime)))speak([payload.teacher_reply,payload.next_prompt].filter(Boolean).join(' '));return true
+}
+async function finishVoiceCapture(){
+  const capture=activeCapture;if(!capture)return;activeCapture=null;cleanupCapture(capture);const seconds=Math.max(.1,(Date.now()-capture.startedAt)/1000);const averageRms=capture.energyFrames?capture.energySum/capture.energyFrames:0;if(seconds<.65||capture.chunks.length<2||capture.peak<.006||averageRms<.0015){showVoiceError('no-speech');return}setVoiceState('processing','Transcrevendo sua voz','Agora o professor está ouvindo o áudio real.',voiceDraft);let wav;try{wav=encodeWav(capture.chunks,capture.sampleRate)}catch{showVoiceError('voice-server');return}await submitVoice(wav,Math.max(1,Math.round(seconds)),capture.session)
 }
 async function startListening(){
-  if(activeRecognition){setVoiceState('processing','Finalizando sua resposta','Só um instante…',voiceText.trim());stopRecognition();return;}
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){showVoiceError('service-not-allowed');return;}
-  const session=++voiceSession;
-  voiceText=''; voiceSent=false; voiceErrorCode='';
-  $('voiceHelpBtn').classList.add('hidden'); $('micHelp').classList.add('hidden');
-  if('speechSynthesis' in window) speechSynthesis.cancel();
-  setVoiceState('preparing','Preparando o microfone','Na primeira vez, o iPhone pedirá sua permissão.');
-  try{await ensureMicrophone()}catch(e){if(session!==voiceSession)return;showVoiceError(e?.name==='NotAllowedError'?'not-allowed':e?.name==='NotFoundError'?'audio-capture':'audio-capture');return;}
-  if(session!==voiceSession)return;
-  const rec=new SR(); activeRecognition=rec;
-  rec.lang=LANGS[current().lang].locale;
-  rec.continuous=false;
-  rec.interimResults=true;
-  rec.maxAlternatives=1;
-  voiceStartedAt=Date.now();
-  rec.onstart=()=>setVoiceState('listening','Estou ouvindo…','Fale sua resposta. Toque novamente para terminar.');
-  rec.onspeechstart=()=>setVoiceState('listening','Voz detectada','Continue falando normalmente.',voiceText.trim());
-  rec.onresult=e=>{
-    let combined=''; let finalText='';
-    for(let i=0;i<e.results.length;i++){const part=e.results[i][0]?.transcript||'';combined+=part+' ';if(e.results[i].isFinal)finalText+=part+' ';}
-    voiceText=combined.trim();
-    setVoiceState('listening','Estou ouvindo…','Toque novamente quando terminar.',voiceText);
-    if(finalText.trim())finishVoice(finalText.trim());
-  };
-  rec.onerror=e=>{voiceErrorCode=e.error||'unknown';activeRecognition=null;if(!voiceSent)showVoiceError(voiceErrorCode);};
-  rec.onend=()=>{activeRecognition=null;if(voiceSent||voiceErrorCode)return;if(voiceText.trim())finishVoice(voiceText);else showVoiceError('no-speech');};
-  try{rec.start()}catch(e){activeRecognition=null;showVoiceError(e?.name==='NotAllowedError'?'not-allowed':'unknown');}
+  await unlockPlayback();if(activeCapture){finishVoiceCapture();return}const session=++voiceSession;voiceDraft='';$('recordingTime').textContent='00:00';$('voiceHelpBtn').classList.add('hidden');$('micHelp').classList.add('hidden');stopAiAudio();if(!navigator.mediaDevices?.getUserMedia){showVoiceError('unsupported');return}const AC=window.AudioContext||window.webkitAudioContext;if(!AC){showVoiceError('unsupported');return}setVoiceState('preparing','Preparando gravação','O áudio será transcrito e analisado, sem depender do reconhecimento do Safari.');
+  let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false})}catch(e){if(session!==voiceSession)return;showVoiceError(e?.name==='NotAllowedError'?'not-allowed':'audio-capture');return}if(session!==voiceSession){stream.getTracks().forEach(t=>t.stop());return}
+  try{const context=new AC();await context.resume();const source=context.createMediaStreamSource(stream);const processor=context.createScriptProcessor(4096,1,1);const sink=context.createGain();sink.gain.value=0;source.connect(processor);processor.connect(sink);sink.connect(context.destination);const capture={session,stream,context,source,processor,sink,chunks:[],sampleRate:context.sampleRate,startedAt:Date.now(),timer:null,maxTimer:null,energySum:0,energyFrames:0,peak:0};activeCapture=capture;processor.onaudioprocess=e=>{if(activeCapture!==capture)return;const data=e.inputBuffer.getChannelData(0);capture.chunks.push(new Float32Array(data));let sum=0;for(let i=0;i<data.length;i++)sum+=data[i]*data[i];const rms=Math.sqrt(sum/data.length);capture.energySum+=rms;capture.energyFrames+=1;capture.peak=Math.max(capture.peak,rms);$('voiceMeterBar').style.width=Math.min(100,Math.max(4,rms*520))+'%'};capture.timer=setInterval(()=>{const elapsed=Math.min(30,Math.floor((Date.now()-capture.startedAt)/1000));$('recordingTime').textContent='00:'+String(elapsed).padStart(2,'0')},250);capture.maxTimer=setTimeout(()=>{if(activeCapture===capture)finishVoiceCapture()},30000);setVoiceState('recording','Gravando sua voz','Fale naturalmente. Toque novamente para terminar.') }catch{stream.getTracks().forEach(t=>t.stop());showVoiceError('unsupported')}
 }
 function addBubble(role,title,text){const bubble=document.createElement('div');bubble.className='bubble '+role;bubble.innerHTML='<small>'+title+'</small><div>'+text+'</div>'; $('thread').appendChild(bubble); $('thread').scrollTop=$('thread').scrollHeight;}
 function nextScenarioPrompt(){const s=current();const prompts=SCENARIOS[convo.scenario]?.prompts?.[s.lang]||SCENARIOS.free.prompts[s.lang]; return prompts[convo.turn % prompts.length]}
 function renderStarters(){const row=$('starterRow');row.innerHTML='';(STARTERS[current().lang]||STARTERS.en).forEach(text=>{const b=document.createElement('button');b.className='starterChip';b.textContent=text;b.onclick=()=>{$('textReply').value=text;$('textReply').focus()};row.appendChild(b)})}
 function openTalk(scenario){convo={scenario,turn:0,lastPrompt:'',history:[]};$('thread').innerHTML='';$('feedbackBox').classList.add('hidden');$('talkTitle').textContent=SCENARIOS[scenario].title;$('talkEy').textContent=SCENARIOS[scenario].desc;$('talkModal').classList.remove('hidden');resetVoice();renderStarters();const prompt=nextScenarioPrompt();convo.lastPrompt=prompt;addBubble('ai','Professor IA',prompt);speak(prompt);current().sessions+=1;saveStudents();render();}
-$('closeTalk').onclick=()=>{resetVoice();if('speechSynthesis' in window)speechSynthesis.cancel();$('talkModal').classList.add('hidden')};$('listenPromptBtn').onclick=()=>{if(activeRecognition)stopRecognition(true);speak(convo.lastPrompt)};$('studentChip').onclick=()=>{$('profileModal').classList.remove('hidden');renderProfiles()};$('closeProfiles').onclick=()=>$('profileModal').classList.add('hidden');$('newStudentBtn').onclick=()=>startOnboarding('new');$('startMissionBtn').onclick=()=>openTalk(current().goal==='work'?'work':'hotel');$('resumeCoachBtn').onclick=()=>openTalk('free');$('openMemoryBtn').onclick=()=>switchView('memory');document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>openTalk(b.dataset.quick));
+$('closeTalk').onclick=()=>{resetVoice();stopAiAudio();$('talkModal').classList.add('hidden')};$('listenPromptBtn').onclick=()=>{resetVoice();speak(convo.lastPrompt)};$('studentChip').onclick=()=>{$('profileModal').classList.remove('hidden');renderProfiles()};$('closeProfiles').onclick=()=>$('profileModal').classList.add('hidden');$('newStudentBtn').onclick=()=>startOnboarding('new');$('startMissionBtn').onclick=()=>openTalk(current().goal==='work'?'work':'hotel');$('resumeCoachBtn').onclick=()=>openTalk('free');$('openMemoryBtn').onclick=()=>switchView('memory');document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>openTalk(b.dataset.quick));
 function updateMemoryFromResponse(student, payload){const mem=student.memory||{}; mem.summary=payload.note || mem.summary; mem.strengths=uniqueTags([...(mem.strengths||[]), ...((payload.memory_update&&payload.memory_update.strengths)||[])]); mem.weaknesses=uniqueTags([...(mem.weaknesses||[]), ...((payload.memory_update&&payload.memory_update.weaknesses)||[])]); mem.topics=uniqueTags([...(mem.topics||[]), payload.memory_update?.topic]); const phrase=payload.memory_update?.saved_phrase; if(phrase){mem.savedPhrases=uniqueTags([...(mem.savedPhrases||[]), phrase]);} mem.notes=[...(mem.notes||[]), payload.memory_update?.note || payload.note].filter(Boolean).slice(-20); student.memory=mem;}
-function applyScores(student, scores, seconds){student.talkSeconds += seconds; student.minutesDone = Math.min(student.daily, student.minutesDone + Math.max(1, Math.round(seconds/45))); student.attempts += 1; student.totalScore += scores.overall; student.bestScore = Math.max(student.bestScore, scores.overall); student.skills['Pronúncia'] = Math.min(100, Math.round(student.skills['Pronúncia']*0.78 + scores.pronunciation*0.22)); student.skills['Construção'] = Math.min(100, Math.round(student.skills['Construção']*0.78 + scores.grammar*0.22)); student.skills['Naturalidade'] = Math.min(100, Math.round(student.skills['Naturalidade']*0.78 + scores.naturalness*0.22)); student.skills['Repertório'] = Math.min(100, student.skills['Repertório'] + 1);}
+function applyScores(student, scores, seconds, mode='text'){student.talkSeconds += seconds; student.minutesDone = Math.min(student.daily, student.minutesDone + Math.max(1, Math.round(seconds/45))); student.attempts += 1; student.totalScore += scores.overall; student.bestScore = Math.max(student.bestScore, scores.overall); if(mode==='voice')student.skills['Pronúncia'] = Math.min(100, Math.round(student.skills['Pronúncia']*0.78 + scores.pronunciation*0.22)); student.skills['Construção'] = Math.min(100, Math.round(student.skills['Construção']*0.78 + scores.grammar*0.22)); student.skills['Naturalidade'] = Math.min(100, Math.round(student.skills['Naturalidade']*0.78 + scores.naturalness*0.22)); student.skills['Repertório'] = Math.min(100, student.skills['Repertório'] + 1);}
 async function coach(userText, seconds){
   const s=current(); addBubble('me',s.name,esc(userText)); $('feedbackBox').classList.add('hidden');
   $('sendTextBtn').disabled=true;$('micBtn').disabled=true;
-  const body={student:{name:s.name,goal:s.goal,level:s.level},name:s.name,lang:s.lang,scenario:convo.scenario,turn:convo.turn,prompt:convo.lastPrompt,userText,memory:s.memory};
+  const body={student:{name:s.name,goal:s.goal,level:s.level},name:s.name,lang:s.lang,scenario:convo.scenario,turn:convo.turn,prompt:convo.lastPrompt,userText,history:convo.history.slice(-8),memory:s.memory};
   let payload=null;
   try{const r=await fetch('/api/coach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error('coach '+r.status);payload=await r.json();}catch{}
   if(!payload){setVoiceState('error','Professor temporariamente indisponível','Sua resposta não foi perdida. Tente enviar novamente.');toast('Não consegui falar com o professor agora.');$('sendTextBtn').disabled=false;$('micBtn').disabled=false;return false;}
   addBubble('ai','Professor IA',esc(payload.teacher_reply)+'<br><br><b>Forma mais natural:</b> '+esc(payload.correction)+'<br><br><b>Próxima pergunta:</b> '+esc(payload.next_prompt));
-  $('sPron').textContent=payload.scores.pronunciation+'%'; $('sGram').textContent=payload.scores.grammar+'%'; $('sNat').textContent=payload.scores.naturalness+'%'; $('sOverall').textContent=payload.scores.overall+'%';
-  $('coachCorrection').innerHTML='<b>Correção sugerida:</b> '+esc(payload.correction); $('coachTip').textContent=payload.tip; $('feedbackBox').classList.remove('hidden');
-  applyScores(s,payload.scores,seconds); updateMemoryFromResponse(s,payload); convo.turn += 1; convo.lastPrompt = payload.next_prompt; saveStudents(); render();
+  showFeedback(payload,'text');
+  applyScores(s,payload.scores,seconds,'text'); updateMemoryFromResponse(s,payload); convo.history.push({role:'student',text:userText},{role:'teacher',text:payload.teacher_reply},{role:'teacher',text:payload.next_prompt}); convo.turn += 1; convo.lastPrompt = payload.next_prompt; saveStudents(); render();
   $('sendTextBtn').disabled=false;$('micBtn').disabled=false;
   $('talkScroll').scrollTop=$('talkScroll').scrollHeight;
   speak(payload.next_prompt); return true;
@@ -160,4 +157,4 @@ document.querySelectorAll('.reviewBtn').forEach(b=>b.onclick=()=>{const s=curren
 function startOnboarding(mode='edit'){const s=current()||initialStudent(); onboarding={mode,step:0,data:mode==='new'?initialStudent():JSON.parse(JSON.stringify(s))}; $('onboard').classList.remove('hidden'); renderOnboarding(); $('profileModal').classList.add('hidden');}
 function renderOnboarding(){const d=onboarding.data; const step=onboarding.step; $('backOnBtn').classList.toggle('hidden',step===0); const titles=['Como posso te chamar?','Qual idioma você quer aprender?','Para que você quer aprender?','Qual seu nível hoje?','Quantos minutos por dia?']; const subs=['Isso deixa o professor mais natural.','Você pode trocar depois, sem perder a memória do aluno.','Isso muda o foco das situações e do vocabulário.','Não precisa acertar perfeitamente; vamos adaptar junto com sua evolução.','A proposta é caber de verdade na sua rotina.']; $('onTitle').textContent=titles[step]; $('onSub').textContent=subs[step]; let html=''; if(step===0){html='<input id="onName" class="field" placeholder="Nome do aluno" value="'+esc(d.name||'')+'">';} if(step===1){html='<div class="onChoices">'+Object.entries(LANGS).map(([k,v])=>'<button class="choice '+(d.lang===k?'sel':'')+'" data-lang="'+k+'"><b>'+v.flag+' '+v.name+'</b><small>Professor adaptado para '+v.name.toLowerCase()+'.</small></button>').join('')+'</div>'; } if(step===2){html='<div class="onChoices">'+Object.entries(GOALS).map(([k,v])=>'<button class="choice '+(d.goal===k?'sel':'')+'" data-goal="'+k+'"><b>'+v[0]+' '+v[1]+'</b><small>Trilha focada em '+v[1].toLowerCase()+'.</small></button>').join('')+'</div>'; } if(step===3){html='<div class="onChoices">'+['A1','A2','B1','B2'].map(v=>'<button class="choice '+(d.level===v?'sel':'')+'" data-level="'+v+'"><b>'+v+'</b><small>'+({A1:'Estou começando',A2:'Entendo o básico',B1:'Já consigo conversar',B2:'Quero soar natural'})[v]+'</small></button>').join('')+'</div>'; } if(step===4){html='<div class="onChoices">'+[5,8,10,15].map(v=>'<button class="choice '+(d.daily===v?'sel':'')+'" data-daily="'+v+'"><b>'+v+' min</b><small>por dia</small></button>').join('')+'</div>'; } $('onBody').innerHTML=html; $('nextOnBtn').textContent=step===4?(onboarding.mode==='new'?'Criar aluno':'Salvar'):'Continuar'; document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{d.lang=b.dataset.lang; renderOnboarding();}); document.querySelectorAll('[data-goal]').forEach(b=>b.onclick=()=>{d.goal=b.dataset.goal; renderOnboarding();}); document.querySelectorAll('[data-level]').forEach(b=>b.onclick=()=>{d.level=b.dataset.level; renderOnboarding();}); document.querySelectorAll('[data-daily]').forEach(b=>b.onclick=()=>{d.daily=+b.dataset.daily; renderOnboarding();});}
 $('backOnBtn').onclick=()=>{if(onboarding.step>0){onboarding.step--;renderOnboarding()}}; $('nextOnBtn').onclick=()=>{if(onboarding.step===0){const value=($('onName')||{}).value?.trim(); if(value) onboarding.data.name=value;} if(onboarding.step<4){onboarding.step++; renderOnboarding(); return;} const data=onboarding.data; if(onboarding.mode==='new'){data.id=uid(); data.memory={summary:'Nenhuma observação ainda.',strengths:[],weaknesses:[],topics:[],savedPhrases:[],notes:[]}; data.skills={Pronúncia:48,Construção:42,Naturalidade:40,Repertório:36}; data.streak=1; data.minutesDone=0; data.talkSeconds=0; data.attempts=0; data.totalScore=0; data.bestScore=0; data.reviewIndex=0; data.sessions=0; students.push(data); currentId=data.id; } else { const idx=students.findIndex(s=>s.id===data.id); if(idx>-1) students[idx]={...students[idx],...data}; currentId=data.id; } saveStudents(); $('onboard').classList.add('hidden'); render(); toast(onboarding.mode==='new'?'Novo aluno criado':'Perfil atualizado'); };
-renderScenarios($('scenarioGrid')); renderScenarios($('talkScenarioGrid')); render(); if(!current().setup) startOnboarding('edit'); if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
+renderScenarios($('scenarioGrid')); renderScenarios($('talkScenarioGrid')); render(); if(!current().setup) startOnboarding('edit'); if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js?v=4.0.0').catch(()=>{})}
