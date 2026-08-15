@@ -1,0 +1,155 @@
+const LANGS={"en":{"name":"Inglês","flag":"🇺🇸","locale":"en-US"},"es":{"name":"Espanhol","flag":"🇪🇸","locale":"es-ES"},"fr":{"name":"Francês","flag":"🇫🇷","locale":"fr-FR"}};
+const GOALS={"travel":["✈️","Viagem"],"work":["💼","Trabalho"],"conversation":["🗣️","Conversação"],"studies":["🎓","Estudos"],"relationships":["❤️","Relacionamentos"]};
+const SCENARIOS={"hotel":{"icon":"🏨","title":"Hotel","desc":"Check-in, quarto e necessidades","prompts":{"en":["Good evening. Welcome to the hotel. Do you have a reservation?","How many nights will you stay with us?","Would you like breakfast included?","What time would you like to check out tomorrow?"],"es":["Buenas noches. Bienvenido al hotel. ¿Tiene una reserva?","¿Cuántas noches va a quedarse con nosotros?","¿Quiere el desayuno incluido?","¿A qué hora quiere hacer el check-out mañana?"],"fr":["Bonsoir. Bienvenue à l’hôtel. Vous avez une réservation ?","Vous restez combien de nuits ?","Voulez-vous le petit-déjeuner inclus ?","À quelle heure voulez-vous partir demain ?"]}},"restaurant":{"icon":"🍽️","title":"Restaurante","desc":"Pedidos e preferências","prompts":{"en":["Hello. Are you ready to order?","Would you like something to drink?","Do you have any dietary restrictions?","How would you like your steak cooked?"],"es":["Hola. ¿Está listo para pedir?","¿Quiere algo para beber?","¿Tiene alguna restricción alimentaria?","¿Cómo quiere la carne?"],"fr":["Bonjour. Vous êtes prêt à commander ?","Vous voulez quelque chose à boire ?","Vous avez des restrictions alimentaires ?","Comment voulez-vous la viande ?"]}},"airport":{"icon":"✈️","title":"Aeroporto","desc":"Voos, portões e bagagens","prompts":{"en":["May I see your passport and boarding pass?","Did you pack your bags yourself?","What is the purpose of your trip?","Do you have any items to declare?"],"es":["¿Puedo ver su pasaporte y su tarjeta de embarque?","¿Empacó usted mismo sus maletas?","¿Cuál es el motivo de su viaje?","¿Tiene algo para declarar?"],"fr":["Puis-je voir votre passeport et votre carte d’embarquement ?","Avez-vous préparé vos bagages vous-même ?","Quel est le but de votre voyage ?","Vous avez quelque chose à déclarer ?"]}},"work":{"icon":"💼","title":"Trabalho","desc":"Reuniões, vendas e apresentações","prompts":{"en":["Could you briefly introduce yourself and your role?","What problem are you trying to solve for the client?","Why is this proposal valuable for them?","How would you answer a price objection?"],"es":["¿Puede presentarse brevemente y explicar su función?","¿Qué problema intenta resolver para el cliente?","¿Por qué esta propuesta tiene valor para él?","¿Cómo respondería a una objeción de precio?"],"fr":["Pouvez-vous vous présenter brièvement et expliquer votre rôle ?","Quel problème essayez-vous de résoudre pour le client ?","Pourquoi cette proposition a-t-elle de la valeur pour lui ?","Comment répondriez-vous à une objection sur le prix ?"]}},"free":{"icon":"🗣️","title":"Conversa livre","desc":"Fale sobre sua vida e seus objetivos","prompts":{"en":["Tell me a little about your day.","What are you learning right now, and why?","What would make you feel more confident speaking this language?","Tell me about a goal you want to achieve this year."],"es":["Cuéntame un poco sobre tu día.","¿Qué estás aprendiendo ahora y por qué?","¿Qué te haría sentir más seguro hablando este idioma?","Cuéntame sobre una meta que quieras alcanzar este año."],"fr":["Parlez-moi un peu de votre journée.","Qu’est-ce que vous apprenez en ce moment et pourquoi ?","Qu’est-ce qui vous donnerait plus de confiance pour parler cette langue ?","Parlez-moi d’un objectif que vous voulez atteindre cette année."]}}};
+const REVIEW_SEED=[
+  ['How are you doing today?','Como você está hoje?','Use a pergunta para abrir conversas naturais.'],
+  ['I have a reservation for two nights.','Eu tenho uma reserva para duas noites.','Excelente frase para hotel e viagem.'],
+  ['I would like to learn by speaking more.','Eu gostaria de aprender falando mais.','Boa estrutura para expressar objetivo.']
+];
+const STARTERS={
+  en:['Yes, I do.','No, I do not.','Could you repeat, please?'],
+  es:['Sí.','No, todavía no.','¿Puede repetir, por favor?'],
+  fr:['Oui.','Non, pas encore.','Pouvez-vous répéter, s’il vous plaît ?']
+};
+const $=id=>document.getElementById(id);
+const store={get(k,f){try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
+function uid(){return 'stu_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4)}
+function minutesToText(total){const m=Math.floor(total/60);const s=String(total%60).padStart(2,'0');return m+'m '+s+'s'}
+function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');clearTimeout(window.__toast);window.__toast=setTimeout(()=>$('toast').classList.add('hidden'),2200)}
+function initialStudent(){return {id:uid(),name:'Lucas',lang:'en',goal:'travel',level:'A1',daily:8,setup:true,streak:1,minutesDone:0,talkSeconds:0,attempts:0,totalScore:0,bestScore:0,reviewIndex:0,sessions:0,skills:{Pronúncia:48,Construção:42,Naturalidade:40,Repertório:36},memory:{summary:'Nenhuma observação ainda.',strengths:[],weaknesses:[],topics:[],savedPhrases:[],notes:[]}}}
+let students=store.get('fluent8_students_v2',[]); if(!students.length){students=[initialStudent()]; store.set('fluent8_students_v2',students);} let currentId=store.get('fluent8_current_id',students[0].id); if(!students.some(s=>s.id===currentId)){currentId=students[0].id; store.set('fluent8_current_id',currentId)}
+function current(){return students.find(s=>s.id===currentId)}
+function saveStudents(){store.set('fluent8_students_v2',students);store.set('fluent8_current_id',currentId)}
+let convo={scenario:'hotel',turn:0,lastPrompt:'',history:[]};
+let onboarding={step:0,data:null,mode:'edit'};
+function greeting(){const h=new Date().getHours();return h<12?'Bom dia 👋':h<18?'Boa tarde 👋':'Boa noite 👋'}
+function averageScore(s){return s.attempts?Math.round(s.totalScore/s.attempts):0}
+function fluency(s){const vals=Object.values(s.skills||{}); return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}
+function renderScenarios(target){target.innerHTML='';Object.entries(SCENARIOS).forEach(([k,v])=>{const b=document.createElement('button');b.className='scenario';b.innerHTML='<div class="icon">'+v.icon+'</div><b>'+v.title+'</b><small>'+v.desc+'</small>';b.onclick=()=>openTalk(k);target.appendChild(b)})}
+function uniqueTags(list){return [...new Set((list||[]).filter(Boolean))].slice(-8)}
+function renderMemory(){const s=current();$('memorySummary').textContent=s.memory.summary||'Nenhuma observação ainda.';const draw=(id,arr,empty)=>{const el=$(id);el.innerHTML='';const vals=uniqueTags(arr);if(!vals.length){el.innerHTML='<span class="muted">'+empty+'</span>';return;}vals.forEach(x=>{const span=document.createElement('span');span.className='memoryTag';span.textContent=x;el.appendChild(span)})};draw('strengths',s.memory.strengths,'Os pontos fortes aparecerão aqui.');draw('weaknesses',s.memory.weaknesses,'Os pontos de atenção aparecerão aqui.');draw('topics',s.memory.topics,'Os tópicos praticados aparecerão aqui.');draw('savedPhrases',s.memory.savedPhrases,'As melhores frases aparecerão aqui.');}
+function renderReview(){const s=current();const phrases=s.memory.savedPhrases||[];const list=phrases.length?phrases.map(p=>[p,'Frase salva pelo professor IA','Revise em voz alta e depois use em um contexto diferente.']):REVIEW_SEED;const item=list[s.reviewIndex%list.length];$('reviewWord').textContent=item[0];$('reviewMeaning').textContent=item[1];$('reviewExample').textContent=item[2];}
+function renderProfiles(){const grid=$('profileGrid');grid.innerHTML='';students.forEach(s=>{const b=document.createElement('button');b.className='profileBtn'+(s.id===currentId?' active':'');b.innerHTML='<b>'+s.name+'</b><small>'+LANGS[s.lang].flag+' '+LANGS[s.lang].name+' · '+s.level+' · '+(GOALS[s.goal]?.[1]||'Meta')+'</small><small>Fluência '+fluency(s)+' · '+(s.memory.notes?.length||0)+' notas do professor</small>';b.onclick=()=>{currentId=s.id;saveStudents();render();$('profileModal').classList.add('hidden');toast('Perfil alterado')};grid.appendChild(b)})}
+function renderProgress(){const s=current();$('progressFluency').textContent=fluency(s);$('studentNameCard').textContent=s.name;$('profileMeta').textContent=LANGS[s.lang].flag+' '+LANGS[s.lang].name+' · '+s.level+' · '+(GOALS[s.goal]?.[1]||'Meta');$('sessions').textContent=s.sessions;$('messages').textContent=s.attempts;$('bestScore').textContent=s.bestScore;$('notesCount').textContent=(s.memory.notes||[]).length;const skillList=$('skillList');skillList.innerHTML='';Object.entries(s.skills).forEach(([k,v])=>{const wrap=document.createElement('div');wrap.className='skill';wrap.innerHTML='<div class="skillTop"><b>'+k+'</b><span>'+v+'</span></div><div class="skillBar"><i style="width:'+v+'%"></i></div>';skillList.appendChild(wrap)})}
+function render(){const s=current();$('greeting').textContent=greeting();$('heroCopy').textContent='Olá, '+s.name+'. Sua trilha atual é focada em '+(GOALS[s.goal]?.[1]||'aprendizado')+' em '+LANGS[s.lang].name+'.';$('missionTitle').textContent=(s.goal==='work'?'Negociação de valor':'Check-in em um hotel');$('missionMeta').textContent=(s.goal==='work'?'Modo profissional':'Conversação real')+' · '+s.daily+' min';$('doneMin').textContent=s.minutesDone;$('dailyMin').textContent=s.daily;$('missionBar').style.width=Math.min(100,Math.round((s.minutesDone/s.daily)*100))+'%';$('fluencyScore').textContent=fluency(s);$('ring').style.setProperty('--ring',fluency(s)+'%');$('streak').textContent=s.streak+' dia'+(s.streak>1?'s':'');$('vocabCount').textContent=(s.memory.savedPhrases||[]).length;$('talkTime').textContent=minutesToText(s.talkSeconds);$('accuracy').textContent=s.attempts?averageScore(s)+'%':'—';$('studentChip').textContent=s.name+' · '+LANGS[s.lang].flag+' '+s.level;$('coachHeading').textContent='Professor IA de '+s.name;renderMemory();renderReview();renderProgress();renderProfiles();}
+function switchView(v){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===v));document.querySelectorAll('.tabBtn').forEach(x=>x.classList.toggle('active',x.dataset.view===v));window.scrollTo({top:0,behavior:'smooth'})}
+document.querySelectorAll('.tabBtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+function speak(text){if(!('speechSynthesis' in window)) return; speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=LANGS[current().lang].locale; u.rate=.88; u.pitch=1; speechSynthesis.speak(u)}
+let activeRecognition=null;
+let voiceText='';
+let voiceSent=false;
+let voiceErrorCode='';
+let voiceStartedAt=0;
+let voiceSession=0;
+let micPermissionReady=false;
+function setVoiceState(state,title,detail,live=''){
+  const panel=$('voicePanel'); if(!panel) return;
+  panel.dataset.state=state;
+  $('voiceTitle').textContent=title;
+  $('voiceStatus').textContent=detail;
+  $('voiceOrb').textContent=state==='listening'?'◉':state==='processing'?'✦':state==='error'?'!':'🎙️';
+  $('micBtn').classList.toggle('listening',state==='listening');
+  $('micBtn').textContent=state==='listening'?'⏹️ Terminar resposta':state==='preparing'?'Preparando microfone…':state==='processing'?'Analisando resposta…':'🎙️ Falar agora';
+  $('micBtn').disabled=state==='preparing'||state==='processing';
+  $('voiceLive').textContent=live;
+  $('voiceLive').classList.toggle('hidden',!live);
+}
+function showVoiceError(code){
+  const messages={
+    'not-allowed':['Microfone bloqueado','Libere o microfone para este site e toque em “Falar agora”.',true],
+    'service-not-allowed':['Reconhecimento de voz desativado','No iPhone, ative Siri e Ditado e libere o microfone para o Safari.',true],
+    'audio-capture':['Microfone indisponível','Feche outro app que esteja usando o áudio e tente novamente.',false],
+    'no-speech':['Não ouvi sua voz','Fale depois que aparecer “Estou ouvindo”. Aproxime o celular e tente novamente.',false],
+    'network':['Reconhecimento sem conexão','Confira a internet e tente de novo. Você também pode responder digitando.',false],
+    'aborted':['Escuta interrompida','Toque em “Falar agora” quando estiver pronto.',false]
+  };
+  const item=messages[code]||['Não consegui iniciar a escuta','Tente novamente ou responda digitando.',false];
+  setVoiceState('error',item[0],item[1],voiceText.trim());
+  $('voiceHelpBtn').classList.toggle('hidden',!item[2]);
+}
+function stopRecognition(abort=false){
+  if(!activeRecognition) return;
+  try{abort?activeRecognition.abort():activeRecognition.stop()}catch{}
+}
+function resetVoice(){
+  voiceSession+=1;
+  if(activeRecognition){const rec=activeRecognition;activeRecognition=null;rec.onstart=null;rec.onspeechstart=null;rec.onresult=null;rec.onerror=null;rec.onend=null;try{rec.abort()}catch{}}
+  voiceText=''; voiceSent=false; voiceErrorCode='';
+  $('voiceHelpBtn').classList.add('hidden'); $('micHelp').classList.add('hidden');
+  setVoiceState('idle','Sua vez de falar','Toque no botão e responda naturalmente.');
+}
+async function ensureMicrophone(){
+  if(micPermissionReady||!navigator.mediaDevices?.getUserMedia) return;
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+  stream.getTracks().forEach(track=>track.stop());
+  micPermissionReady=true;
+}
+function finishVoice(text){
+  const clean=String(text||'').trim(); if(!clean||voiceSent) return;
+  voiceSent=true;
+  const seconds=Math.max(3,Math.round((Date.now()-voiceStartedAt)/1000));
+  stopRecognition();
+  setVoiceState('processing','Analisando sua resposta','O professor está preparando uma correção útil.',clean);
+  coach(clean,seconds).then(ok=>{if(ok)setVoiceState('idle','Boa! Sua vez novamente','Ouça a próxima pergunta e continue a conversa.');});
+}
+async function startListening(){
+  if(activeRecognition){setVoiceState('processing','Finalizando sua resposta','Só um instante…',voiceText.trim());stopRecognition();return;}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){showVoiceError('service-not-allowed');return;}
+  const session=++voiceSession;
+  voiceText=''; voiceSent=false; voiceErrorCode='';
+  $('voiceHelpBtn').classList.add('hidden'); $('micHelp').classList.add('hidden');
+  if('speechSynthesis' in window) speechSynthesis.cancel();
+  setVoiceState('preparing','Preparando o microfone','Na primeira vez, o iPhone pedirá sua permissão.');
+  try{await ensureMicrophone()}catch(e){if(session!==voiceSession)return;showVoiceError(e?.name==='NotAllowedError'?'not-allowed':e?.name==='NotFoundError'?'audio-capture':'audio-capture');return;}
+  if(session!==voiceSession)return;
+  const rec=new SR(); activeRecognition=rec;
+  rec.lang=LANGS[current().lang].locale;
+  rec.continuous=false;
+  rec.interimResults=true;
+  rec.maxAlternatives=1;
+  voiceStartedAt=Date.now();
+  rec.onstart=()=>setVoiceState('listening','Estou ouvindo…','Fale sua resposta. Toque novamente para terminar.');
+  rec.onspeechstart=()=>setVoiceState('listening','Voz detectada','Continue falando normalmente.',voiceText.trim());
+  rec.onresult=e=>{
+    let combined=''; let finalText='';
+    for(let i=0;i<e.results.length;i++){const part=e.results[i][0]?.transcript||'';combined+=part+' ';if(e.results[i].isFinal)finalText+=part+' ';}
+    voiceText=combined.trim();
+    setVoiceState('listening','Estou ouvindo…','Toque novamente quando terminar.',voiceText);
+    if(finalText.trim())finishVoice(finalText.trim());
+  };
+  rec.onerror=e=>{voiceErrorCode=e.error||'unknown';activeRecognition=null;if(!voiceSent)showVoiceError(voiceErrorCode);};
+  rec.onend=()=>{activeRecognition=null;if(voiceSent||voiceErrorCode)return;if(voiceText.trim())finishVoice(voiceText);else showVoiceError('no-speech');};
+  try{rec.start()}catch(e){activeRecognition=null;showVoiceError(e?.name==='NotAllowedError'?'not-allowed':'unknown');}
+}
+function addBubble(role,title,text){const bubble=document.createElement('div');bubble.className='bubble '+role;bubble.innerHTML='<small>'+title+'</small><div>'+text+'</div>'; $('thread').appendChild(bubble); $('thread').scrollTop=$('thread').scrollHeight;}
+function nextScenarioPrompt(){const s=current();const prompts=SCENARIOS[convo.scenario]?.prompts?.[s.lang]||SCENARIOS.free.prompts[s.lang]; return prompts[convo.turn % prompts.length]}
+function renderStarters(){const row=$('starterRow');row.innerHTML='';(STARTERS[current().lang]||STARTERS.en).forEach(text=>{const b=document.createElement('button');b.className='starterChip';b.textContent=text;b.onclick=()=>{$('textReply').value=text;$('textReply').focus()};row.appendChild(b)})}
+function openTalk(scenario){convo={scenario,turn:0,lastPrompt:'',history:[]};$('thread').innerHTML='';$('feedbackBox').classList.add('hidden');$('talkTitle').textContent=SCENARIOS[scenario].title;$('talkEy').textContent=SCENARIOS[scenario].desc;$('talkModal').classList.remove('hidden');resetVoice();renderStarters();const prompt=nextScenarioPrompt();convo.lastPrompt=prompt;addBubble('ai','Professor IA',prompt);speak(prompt);current().sessions+=1;saveStudents();render();}
+$('closeTalk').onclick=()=>{resetVoice();if('speechSynthesis' in window)speechSynthesis.cancel();$('talkModal').classList.add('hidden')};$('listenPromptBtn').onclick=()=>{if(activeRecognition)stopRecognition(true);speak(convo.lastPrompt)};$('studentChip').onclick=()=>{$('profileModal').classList.remove('hidden');renderProfiles()};$('closeProfiles').onclick=()=>$('profileModal').classList.add('hidden');$('newStudentBtn').onclick=()=>startOnboarding('new');$('startMissionBtn').onclick=()=>openTalk(current().goal==='work'?'work':'hotel');$('resumeCoachBtn').onclick=()=>openTalk('free');$('openMemoryBtn').onclick=()=>switchView('memory');document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>openTalk(b.dataset.quick));
+function updateMemoryFromResponse(student, payload){const mem=student.memory||{}; mem.summary=payload.note || mem.summary; mem.strengths=uniqueTags([...(mem.strengths||[]), ...((payload.memory_update&&payload.memory_update.strengths)||[])]); mem.weaknesses=uniqueTags([...(mem.weaknesses||[]), ...((payload.memory_update&&payload.memory_update.weaknesses)||[])]); mem.topics=uniqueTags([...(mem.topics||[]), payload.memory_update?.topic]); const phrase=payload.memory_update?.saved_phrase; if(phrase){mem.savedPhrases=uniqueTags([...(mem.savedPhrases||[]), phrase]);} mem.notes=[...(mem.notes||[]), payload.memory_update?.note || payload.note].filter(Boolean).slice(-20); student.memory=mem;}
+function applyScores(student, scores, seconds){student.talkSeconds += seconds; student.minutesDone = Math.min(student.daily, student.minutesDone + Math.max(1, Math.round(seconds/45))); student.attempts += 1; student.totalScore += scores.overall; student.bestScore = Math.max(student.bestScore, scores.overall); student.skills['Pronúncia'] = Math.min(100, Math.round(student.skills['Pronúncia']*0.78 + scores.pronunciation*0.22)); student.skills['Construção'] = Math.min(100, Math.round(student.skills['Construção']*0.78 + scores.grammar*0.22)); student.skills['Naturalidade'] = Math.min(100, Math.round(student.skills['Naturalidade']*0.78 + scores.naturalness*0.22)); student.skills['Repertório'] = Math.min(100, student.skills['Repertório'] + 1);}
+async function coach(userText, seconds){
+  const s=current(); addBubble('me',s.name,esc(userText)); $('feedbackBox').classList.add('hidden');
+  $('sendTextBtn').disabled=true;$('micBtn').disabled=true;
+  const body={student:{name:s.name,goal:s.goal,level:s.level},name:s.name,lang:s.lang,scenario:convo.scenario,turn:convo.turn,prompt:convo.lastPrompt,userText,memory:s.memory};
+  let payload=null;
+  try{const r=await fetch('/api/coach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error('coach '+r.status);payload=await r.json();}catch{}
+  if(!payload){setVoiceState('error','Professor temporariamente indisponível','Sua resposta não foi perdida. Tente enviar novamente.');toast('Não consegui falar com o professor agora.');$('sendTextBtn').disabled=false;$('micBtn').disabled=false;return false;}
+  addBubble('ai','Professor IA',esc(payload.teacher_reply)+'<br><br><b>Forma mais natural:</b> '+esc(payload.correction)+'<br><br><b>Próxima pergunta:</b> '+esc(payload.next_prompt));
+  $('sPron').textContent=payload.scores.pronunciation+'%'; $('sGram').textContent=payload.scores.grammar+'%'; $('sNat').textContent=payload.scores.naturalness+'%'; $('sOverall').textContent=payload.scores.overall+'%';
+  $('coachCorrection').innerHTML='<b>Correção sugerida:</b> '+esc(payload.correction); $('coachTip').textContent=payload.tip; $('feedbackBox').classList.remove('hidden');
+  applyScores(s,payload.scores,seconds); updateMemoryFromResponse(s,payload); convo.turn += 1; convo.lastPrompt = payload.next_prompt; saveStudents(); render();
+  $('sendTextBtn').disabled=false;$('micBtn').disabled=false;
+  $('talkScroll').scrollTop=$('talkScroll').scrollHeight;
+  speak(payload.next_prompt); return true;
+}
+$('sendTextBtn').onclick=async()=>{const t=$('textReply').value.trim();if(!t)return;$('textReply').value='';setVoiceState('processing','Analisando sua resposta','O professor está preparando uma correção útil.',t);const ok=await coach(t,Math.max(4,Math.round(t.split(/\s+/).length*1.2)));if(ok)setVoiceState('idle','Boa! Sua vez novamente','Ouça a próxima pergunta e continue a conversa.');};
+$('textReply').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('sendTextBtn').click()}});
+$('micBtn').onclick=startListening;
+$('voiceHelpBtn').onclick=()=>{$('micHelp').classList.toggle('hidden')};
+document.querySelectorAll('.reviewBtn').forEach(b=>b.onclick=()=>{const s=current(); const grade=+b.dataset.grade; if(grade===2){s.skills['Repertório']=Math.min(100,s.skills['Repertório']+1)} if(grade===0){s.skills['Repertório']=Math.max(10,s.skills['Repertório']-1)} s.reviewIndex += 1; saveStudents(); render(); toast(grade===2?'Memória reforçada':'Vou te mostrar essa frase novamente');});
+function startOnboarding(mode='edit'){const s=current()||initialStudent(); onboarding={mode,step:0,data:mode==='new'?initialStudent():JSON.parse(JSON.stringify(s))}; $('onboard').classList.remove('hidden'); renderOnboarding(); $('profileModal').classList.add('hidden');}
+function renderOnboarding(){const d=onboarding.data; const step=onboarding.step; $('backOnBtn').classList.toggle('hidden',step===0); const titles=['Como posso te chamar?','Qual idioma você quer aprender?','Para que você quer aprender?','Qual seu nível hoje?','Quantos minutos por dia?']; const subs=['Isso deixa o professor mais natural.','Você pode trocar depois, sem perder a memória do aluno.','Isso muda o foco das situações e do vocabulário.','Não precisa acertar perfeitamente; vamos adaptar junto com sua evolução.','A proposta é caber de verdade na sua rotina.']; $('onTitle').textContent=titles[step]; $('onSub').textContent=subs[step]; let html=''; if(step===0){html='<input id="onName" class="field" placeholder="Nome do aluno" value="'+esc(d.name||'')+'">';} if(step===1){html='<div class="onChoices">'+Object.entries(LANGS).map(([k,v])=>'<button class="choice '+(d.lang===k?'sel':'')+'" data-lang="'+k+'"><b>'+v.flag+' '+v.name+'</b><small>Professor adaptado para '+v.name.toLowerCase()+'.</small></button>').join('')+'</div>'; } if(step===2){html='<div class="onChoices">'+Object.entries(GOALS).map(([k,v])=>'<button class="choice '+(d.goal===k?'sel':'')+'" data-goal="'+k+'"><b>'+v[0]+' '+v[1]+'</b><small>Trilha focada em '+v[1].toLowerCase()+'.</small></button>').join('')+'</div>'; } if(step===3){html='<div class="onChoices">'+['A1','A2','B1','B2'].map(v=>'<button class="choice '+(d.level===v?'sel':'')+'" data-level="'+v+'"><b>'+v+'</b><small>'+({A1:'Estou começando',A2:'Entendo o básico',B1:'Já consigo conversar',B2:'Quero soar natural'})[v]+'</small></button>').join('')+'</div>'; } if(step===4){html='<div class="onChoices">'+[5,8,10,15].map(v=>'<button class="choice '+(d.daily===v?'sel':'')+'" data-daily="'+v+'"><b>'+v+' min</b><small>por dia</small></button>').join('')+'</div>'; } $('onBody').innerHTML=html; $('nextOnBtn').textContent=step===4?(onboarding.mode==='new'?'Criar aluno':'Salvar'):'Continuar'; document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{d.lang=b.dataset.lang; renderOnboarding();}); document.querySelectorAll('[data-goal]').forEach(b=>b.onclick=()=>{d.goal=b.dataset.goal; renderOnboarding();}); document.querySelectorAll('[data-level]').forEach(b=>b.onclick=()=>{d.level=b.dataset.level; renderOnboarding();}); document.querySelectorAll('[data-daily]').forEach(b=>b.onclick=()=>{d.daily=+b.dataset.daily; renderOnboarding();});}
+$('backOnBtn').onclick=()=>{if(onboarding.step>0){onboarding.step--;renderOnboarding()}}; $('nextOnBtn').onclick=()=>{if(onboarding.step===0){const value=($('onName')||{}).value?.trim(); if(value) onboarding.data.name=value;} if(onboarding.step<4){onboarding.step++; renderOnboarding(); return;} const data=onboarding.data; if(onboarding.mode==='new'){data.id=uid(); data.memory={summary:'Nenhuma observação ainda.',strengths:[],weaknesses:[],topics:[],savedPhrases:[],notes:[]}; data.skills={Pronúncia:48,Construção:42,Naturalidade:40,Repertório:36}; data.streak=1; data.minutesDone=0; data.talkSeconds=0; data.attempts=0; data.totalScore=0; data.bestScore=0; data.reviewIndex=0; data.sessions=0; students.push(data); currentId=data.id; } else { const idx=students.findIndex(s=>s.id===data.id); if(idx>-1) students[idx]={...students[idx],...data}; currentId=data.id; } saveStudents(); $('onboard').classList.add('hidden'); render(); toast(onboarding.mode==='new'?'Novo aluno criado':'Perfil atualizado'); };
+renderScenarios($('scenarioGrid')); renderScenarios($('talkScenarioGrid')); render(); if(!current().setup) startOnboarding('edit'); if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
