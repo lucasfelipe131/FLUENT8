@@ -1,0 +1,14 @@
+{
+  "name": "fluent8",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Aplicativo mobile-first para aprender idiomas com conversação e professor IA com memória individual.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/coach.js && node --check src/content.js && node --check public/app.js && node --check public/sw.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
